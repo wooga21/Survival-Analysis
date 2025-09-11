@@ -1,0 +1,1551 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>대화형 생존 분석 강의</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- MathJax CDN for LaTeX rendering -->
+    <script type="text/javascript" id="MathJax-script" async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+    </script>
+    <!-- Chosen Palette: Warm Neutral with Blue Accent -->
+    <!-- Application Structure Plan: 이 애플리케이션은 사용자가 순차적으로 학습하거나 관심 주제로 바로 이동할 수 있도록 상단 탭 네비게이션 구조로 설계됨. 각 섹션은 '소개', '그룹 비교 (Log-Rank)', '위험 예측 (Cox Model)', '고급 모델', 'Q&A', 'R 환경 설정' 등 학습 목표에 따라 주제별로 명확히 구분됨. '소개' 및 '고급 모델' 탭 내에는 여러 서브 페이지를 두어 내용을 세분화하고, 이전/다음 버튼으로 페이지를 넘길 수 있도록 하여 학습 흐름을 제어함. 이러한 모듈식 구조는 다양한 수준의 학습자가 자신의 페이스에 맞춰 내용을 탐색할 수 있게 하며, 복잡한 개념을 소화하기 쉬운 단위로 분해하여 제공함으로써 학습 효율을 높임. 각 섹션 내에서는 이론 설명과 함께 사용자가 직접 조작할 수 있는 대화형 차트를 배치하여, 추상적인 통계 개념을 시각적으로 구체화하고 능동적인 학습을 유도함. -->
+    <!-- Visualization & Content Choices: 각 분석 기법의 핵심 목표에 맞춰 시각화 및 상호작용 방식을 선택함. [카플란-마이어]에서는 가상 환자 데이터를 기반으로 동적으로 업데이트되는 카플란-마이어 곡선(Chart.js 라인 차트)을 통해 생존율 변화를 시각적으로 비교(Goal: Compare)하도록 함. [Log-Rank]에서는 그룹 선택에 따른 생존 곡선과 p-값을 제시함. [위험 예측]에서는 Cox 모델의 핵심 결과인 위험비(HR)를 사용자가 변수를 선택함에 따라 동적으로 보여주는 텍스트 블록을 통해 관계를 탐색(Goal: Relationships)하도록 설계함. [고급 모델]의 시간 의존적 변수 효과는 슬라이더 조작에 따른 위험비 변화를 텍스트로 나타내고(Goal: Change), 경쟁 위험은 누적 발생 함수(CIF) 곡선을 통해 여러 사건의 발생 확률을 계단형 차트로 비교(Goal: Compare)하는 대화형 차트를 구현함. 모든 시각화는 Chart.js(Canvas)를 사용하였으며, SVG나 Mermaid.js는 사용하지 않음. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body { font-family: 'Noto Sans KR', sans-serif; background-color: #f8f9fa; }
+        .tab-button { transition: all 0.3s ease; }
+        .tab-button.active { border-color: #3B82F6; color: #3B82F6; background-color: #EFF6FF; }
+        .content-section { display: none; }
+        .content-section.active { display: block; }
+        .sub-page { display: none; }
+        .sub-page.active { display: block; }
+        .chart-container { position: relative; width: 100%; max-width: 700px; margin-left: auto; margin-right: auto; height: 350px; max-height: 50vh; }
+        @media (min-width: 768px) { .chart-container { height: 450px; } }
+        .note { background-color: #e9ecef; border-left: 4px solid #6c757d; }
+        /* Custom styles for censoring diagram */
+        .timeline-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 16px;
+            background-color: #f0f4f8;
+            border-radius: 8px;
+            max-width: 600px;
+            margin: 20px auto;
+        }
+        .timeline-item {
+            display: flex;
+            align-items: center;
+            position: relative;
+        }
+        .timeline-bar-wrapper { /* New wrapper to control bar width */
+            flex-grow: 1; /* Allow wrapper to take remaining space */
+            position: relative;
+            height: 12px; /* Same height as bar */
+            background-color: #e2e8f0; /* Light gray background for full potential length */
+            border-radius: 6px;
+        }
+        .timeline-bar {
+            height: 12px;
+            border-radius: 6px;
+            position: absolute; /* Position within wrapper */
+            left: 0;
+            top: 0;
+            /* Width will be set inline */
+        }
+        .event-end {
+            background-color: #3B82F6; /* Blue */
+        }
+        .censored-end {
+            background-color: #EF4444; /* Red */
+        }
+        .status-marker {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%) translateX(-50%); /* Centered horizontally and vertically */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: bold;
+            color: white;
+            z-index: 1; /* Ensure marker is above bar */
+        }
+        .status-marker.event {
+            background-color: #3B82F6; /* Blue */
+        }
+        .status-marker.censored {
+            background-color: #EF4444; /* Red */
+        }
+        .timeline-label {
+            width: 80px; /* Increased width for longer labels */
+            text-align: right;
+            margin-right: 10px;
+            font-size: 0.875rem;
+            color: #4B5563;
+            flex-shrink: 0; /* Prevent label from shrinking */
+        }
+        .time-axis {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+            font-size: 0.75rem;
+            color: #6B7280;
+            padding-left: 80px; /* Align with timeline bars */
+            padding-right: 18px; /* Approx. status-marker width + margin */
+            width: calc(100% - 80px); /* Adjust width to match bar area */
+            margin-left: auto; /* Center it */
+            margin-right: auto;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.875rem;
+            color: #4B5563;
+        }
+        .legend-color-box {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+        }
+        /* New styles for Stanford diagram */
+        .stanford-timeline-container .timeline-item {
+            margin-bottom: 0px; /* Adjust spacing between segments of same patient */
+        }
+        .stanford-timeline-container .timeline-label {
+            width: 120px; /* Adjust for longer labels like "환자 X (이식 전)" */
+        }
+        .stanford-timeline-container .transplant-event {
+            background-color: #60a5fa; /* A lighter blue for transplant segments */
+        }
+        .stanford-timeline-container .status-marker.transplant {
+            background-color: #60a5fa; /* Match color for transplant marker */
+        }
+        /* New class for the line segment after transplant, matching transplant color */
+        .transplant-post-event {
+            background-color: #60a5fa; /* Match transplant-event color */
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900"> 생존자료 분석</h1>
+            <p class="mt-2 text-lg text-gray-600">이론과 R을 활용한 실습</p>
+        </header>
+
+        <nav class="flex flex-wrap justify-center border-b-2 border-gray-200 mb-8">
+            <button class="tab-button py-3 px-4 md:px-6 font-semibold border-b-2 border-transparent text-gray-500 hover:text-blue-600" data-tab="intro">소개</button>
+            <button class="tab-button py-3 px-4 md:px-6 font-semibold border-b-2 border-transparent text-gray-500 hover:text-blue-600" data-tab="km_logrank">KM & Log-Rank</button>
+            <button class="tab-button py-3 px-4 md:px-6 font-semibold border-b-2 border-transparent text-gray-500 hover:text-blue-600" data-tab="cox_model">Cox Model</button>
+            <button class="tab-button py-3 px-4 md:px-6 font-semibold border-b-2 border-transparent text-gray-500 hover:text-blue-600" data-tab="advanced_models">고급 모델</button>
+            <button class="tab-button py-3 px-4 md:px-6 font-semibold border-b-2 border-transparent text-gray-500 hover:text-blue-600" data-tab="qna">Q&A</button>
+            <button class="tab-button py-3 px-4 md:px-6 font-semibold border-b-2 border-transparent text-gray-500 hover:text-blue-600" data-tab="r_setup">R 환경 설정</button>
+        </nav>
+
+        <main>
+            <div id="intro" class="content-section p-4 md:p-6 bg-white rounded-xl shadow-md">
+                <div class="sub-page" data-page="1">
+                    <h2 class="text-2xl font-bold mb-4">생존 자료 분석이란 무엇인가?</h2>
+                    <p class="mb-4 text-xl font-bold">생존 자료 분석은 특정 사건(예: 사망, 질병 재발, 치료 성공 등)이 발생하기까지 걸린 시간을 다루는 통계 분석 기법임. 이는 일반적인 통계 데이터와 달리 '중도 절단(censoring)'이라는 특수한 형태를 포함함.</p>
+                    <div class="flex justify-center my-6">
+                        <div class="w-full max-w-md bg-gray-100 rounded-lg p-4 text-center text-gray-600 border border-gray-300">
+                            <span class="text-6xl">⏱️</span>
+                            <p class="mt-2 text-lg text-xl font-bold">시간 기반 사건 발생 분석</p>
+                            <p class="text-sm text-xl font-bold">사건 발생까지의 기간과 그 원인을 탐색</p>
+                        </div>
+                    </div>
+                    <p class="mb-4">
+                        <strong class="text-blue-600 text-xl font-bold">왜 생존 분석이 필요한가?</strong>
+                    </p>
+                    <ul class="list-disc list-inside mb-4 space-y-2">
+                        <li><strong class="text-xl font-bold">시간 정보의 중요성:</strong> 사건 발생 여부뿐만 아니라, 사건이 언제 발생했는지(시간)에 대한 정보를 분석에 포함해야 할 때 필수적임.</li>
+                        <li><strong class="text-xl font-bold">중도 절단 데이터 처리:</strong> 연구 기간 중 사건이 발생하지 않은 경우나 추적 관찰이 중단된 경우와 같이, 정확한 사건 발생 시간을 알 수 없는 '중도 절단' 데이터를 효과적으로 다룰 수 있음.</li>
+                        <li><strong class="text-xl font-bold">시간에 따른 위험 변화 분석:</strong> 시간에 따라 사건 발생 위험이 어떻게 변하는지(예: 치료 초기와 후기의 위험도 변화)를 파악하고, 여러 요인이 이 위험에 미치는 영향을 정량적으로 분석할 수 있음.</li>
+                    </ul>
+                </div>
+
+                <div class="sub-page" data-page="2">
+                    <h2 class="text-2xl font-bold mb-4">중도 절단(Censoring)의 이해</h2>
+                    <p class="mb-4 text-xl font-bold">중도 절단은 특정 개체의 사건 발생 시간을 정확히 알 수 없는 경우를 의미하며, 생존 자료 분석의 가장 중요한 특징 중 하나임. 중도 절단된 데이터는 분석에서 제외되지 않고, 최소한의 생존 시간을 제공하는 것으로 간주되어 분석에 포함됨.</p>
+                    <p class="mb-4">
+                        <strong class="text-blue-600 text-xl font-bold">1. 우측 중도 절단 (Right Censoring):</strong>
+                        가장 흔한 형태임. 사건이 추적 관찰 기간 내에 발생하지 않았거나, 관찰이 중단된 경우에 발생함.
+                    </p>
+                    <ul class="list-disc list-inside mb-4 ml-4 space-y-1">
+                        <li>연구 기간이 종료될 때까지 관심 사건이 발생하지 않은 경우임.</li>
+                        <li>추적 관찰 도중 환자가 연구에서 이탈하거나 연락이 두절된 경우임.</li>
+                        <li>환자가 관심 사건 외의 다른 원인으로 사망한 경우 (경쟁 위험이 없는 상황에서)임.</li>
+                    </ul>
+                    <div class="timeline-container">
+                        <div class="time-axis text-xl font-bold">
+                            <span>0</span>
+                            <span>5</span>
+                            <span>10</span>
+                            <span>15</span>
+                            <span>20 (개월)</span>
+                        </div>
+                        <div class="timeline-item">
+                            <span class="timeline-label text-xl font-bold">환자 1</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar event-end" style="width: calc(10 / 20 * 100%);">
+                                    <div class="status-marker event">✔</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="timeline-item">
+                            <span class="timeline-label text-xl font-bold">환자 2</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar censored-end" style="width: calc(20 / 20 * 100%);">
+                                    <div class="status-marker censored">✖</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="timeline-item">
+                            <span class="timeline-label text-xl font-bold">환자 3</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar event-end" style="width: calc(15 / 20 * 100%);">
+                                    <div class="status-marker event">✔</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="timeline-item">
+                            <span class="timeline-label text-xl font-bold">환자 4</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar censored-end" style="width: calc(5 / 20 * 100%);">
+                                    <div class="status-marker censored">✖</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="timeline-item">
+                            <span class="timeline-label text-xl font-bold">환자 5</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar event-end" style="width: calc(18 / 20 * 100%);">
+                                    <div class="status-marker event">✔</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="timeline-item">
+                            <span class="timeline-label text-xl font-bold">환자 6</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar censored-end" style="width: calc(12 / 20 * 100%);">
+                                    <div class="status-marker censored">✖</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex justify-center mt-4 gap-4">
+                            <div class="legend-item text-xl font-bold">
+                                <div class="legend-color-box bg-blue-500"></div> 사건 발생
+                            </div>
+                            <div class="legend-item text-xl font-bold">
+                                <div class="legend-color-box bg-red-500"></div> 중도 절단
+                            </div>
+                        </div>
+                        <p class="mt-2 text-sm text-gray-600 text-xl font-bold text-center">중도 절단 자료 예시: 파란색은 사건 발생, 빨간색은 중도 절단된 추적 기간을 의미함. 각 환자마다 추적 기간이 다름을 확인 가능함.</p>
+                    </div>
+                    <p class="mb-4 text-xl font-bold">
+                        <strong class="text-blue-600 text-xl font-bold">2. 좌측 중도 절단 (Left Censoring):</strong>
+                        사건이 특정 시간 이전에 이미 발생했지만, 정확한 발생 시점을 알 수 없는 경우임.
+                        <br>예: 특정 검사(스크리닝) 시점에 이미 질병이 있었음을 나중에 알게 된 경우임.
+                    </p>
+                    <p class="mb-4 text-xl font-bold">
+                        <strong class="text-blue-600 text-xl font-bold">3. 구간 중도 절단 (Interval Censoring):</strong>
+                        사건이 두 관찰 시점 사이의 특정 구간 내에서 발생했음을 아는 경우임.
+                        <br>예: 정기 검진 사이에 질병이 진단된 경우 (이전 검진에서는 음성, 다음 검진에서는 양성)임.
+                    </p>
+                </div>
+
+                <div class="sub-page" data-page="3">
+                    <h2 class="text-2xl font-bold mb-4">생존함수 (S(t))와 위험함수 (h(t))</h2>
+                    <p class="mb-4 text-xl font-bold">생존 분석의 핵심적인 두 가지 개념은 생존함수와 위험함수임.</p>
+                    <p class="mb-4 text-xl font-bold">
+                        <strong class="text-blue-600 text-xl font-bold">1. 생존함수 (S(t)):</strong>
+                        특정 시간 t까지 사건이 발생하지 않고 생존할 확률을 나타내는 함수임. 이는 시간에 따른 누적 생존율을 보여줌.
+                        <br>예: "5년 생존율은 70%이다"는 S(5) = 0.7을 의미함.
+                    </p>
+                    <p class="mb-4 text-xl font-bold">
+                        <strong class="text-blue-600 text-xl font-bold">2. 위험함수 (h(t)):</strong>
+                        특정 시간 t에 생존한 개체가 t 이후 아주 짧은 시간 내에 사건을 겪을 순간적인 위험도(사건 발생률)를 나타내는 함수임. 즉각적인 사건 발생 가능성을 보여줌.
+                        <br>수식: $$h(t) = \lim_{\Delta t \to 0} \frac{P(t \le T < t + \Delta t \mid T \ge t)}{\Delta t}$$
+                    </p>
+                    <p class="mb-4 text-xl font-bold">
+                        <strong class="text-blue-600 text-xl font-bold">두 함수의 관계:</strong>
+                        생존함수와 위험함수는 서로 밀접하게 관련되어 있으며, 하나를 알면 다른 하나를 유도할 수 있음. 위험함수를 시간에 따라 누적하면 누적 위험 함수가 되고, 이 누적 위험 함수를 통해 생존함수를 계산할 수 있음.
+                        <br>수식: $$S(t) = \exp\left(-\int_0^t h(u)du\right)$$
+                        <br>이는 누적 위험이 증가할수록 생존 확률이 감소함을 의미하며, 위험이 높을수록 생존 곡선은 더 가파르게 하락함.
+                    </p>
+                </div>
+
+                <div class="sub-page" data-page="4">
+                    <h2 class="text-2xl font-bold mb-4">카플란-마이어(Kaplan-Meier) 생존 곡선</h2>
+                    <p class="mb-4 text-xl font-bold">카플란-마이어 생존 곡선은 비모수적 방법으로, 실제 관찰된 데이터로부터 생존함수를 추정하는 가장 널리 사용되는 방법임. 이 방법은 중도 절단된 데이터를 효과적으로 처리하며, 시간이 지남에 따라 생존 확률이 계단식으로 떨어지는 그래프를 통해 직관적으로 생존 패턴을 파악할 수 있게 함.</p>
+                    
+                    <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">실습 (R): 가상 환자 데이터로 Kaplan-Meier Curve 그리기</h3>
+                    <p class="mb-4 text-xl font-bold">아래는 생존 분석 실습을 위한 가상의 환자 데이터임. 이 데이터를 사용하여 R에서 Kaplan-Meier Curve 그리기. </p>
+                    <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                        <pre><code># 가상 환자 데이터 (예제)
+# id: 환자 식별자
+# time: 추적 기간 또는 사건 발생까지의 시간 (단위: 개월)
+# event: 사건 발생 여부 (1=사건 발생, 0=중도 절단)
+# group: 환자 그룹 (예: 치료군 "A" vs 대조군 "B")
+patient_data <- data.frame(
+  id = 1:10,
+  time = c(10, 15, 20, 25, 30, 12, 18, 22, 28, 35), 
+  event = c(1, 0, 1, 1, 0, 1, 0, 1, 0, 1), 
+  group = c("A", "A", "B", "A", "B", "B", "A", "B", "A", "B") 
+)
+
+# R 패키지 소개 및 설치 (필요시)
+# install.packages("survival") # 생존 분석의 핵심 패키지
+# install.packages("survminer") # 생존 곡선 시각화에 유용
+library(survival)
+library(survminer)
+
+# 1. Surv() 함수로 생존 객체 생성
+# time: 사건 발생 또는 중도 절단까지의 시간
+# event: 사건 발생 여부 (1=사건, 0=중도 절단)
+surv_object <- Surv(time = patient_data$time, event = patient_data$event)
+
+# 2. survfit() 함수로 Kaplan-Meier 모델 적합
+# formula: 생존 객체 ~ 그룹 변수
+km_fit <- survfit(surv_object ~ patient_data$group, data = patient_data)
+
+# 3. ggsurvplot() 함수로 Kaplan-Meier 곡선 그리기
+# pval = TRUE: Log-rank p-value 표시
+# conf.int = TRUE: 신뢰구간 표시
+# risk.table = TRUE: 각 시점의 위험군(Number at risk) 테이블 표시
+ggsurvplot(km_fit, 
+           data = patient_data, 
+           pval = TRUE, 
+           conf.int = TRUE, 
+           risk.table = TRUE, 
+           legend.title = "그룹", 
+           legend.labs = c("그룹 A", "그룹 B"),
+           title = "가상 환자 데이터의 Kaplan-Meier 생존 곡선",
+           xlab = "시간 (개월)", 
+           ylab = "생존 확률"
+)</code></pre>
+                    </div>
+                    <p class="mb-4 text-xl font-bold">위 코드를 R 스튜디오에서 실행하여 결과를 확인하기. 생성된 그래프를 통해 각 그룹의 생존 확률이 시간에 따라 어떻게 변화하는지, 그리고 두 그룹의 생존 곡선이 시각적으로 어떻게 다른지 파악할 수 있음.</p>
+                </div>
+
+                <div class="flex justify-between mt-4">
+                    <button id="intro-prev" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition disabled:opacity-50 text-xl font-bold">이전</button>
+                    <button id="intro-next" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-xl font-bold">다음</button>
+                </div>
+            </div>
+
+            <div id="km_logrank" class="content-section p-4 md:p-6 bg-white rounded-xl shadow-md">
+                <h2 class="text-2xl font-bold mb-2">Log-Rank 검정</h2>
+                <p class="mb-4 text-xl font-bold">Log-rank 검정은 두 개 이상의 그룹 간에 생존 곡선에 통계적으로 유의미한 차이가 있는지를 검정하는 비모수적 방법임. 이는 Kaplan-Meier 곡선으로 확인한 시각적 차이가 우연에 의한 것인지, 아니면 실제 모집단에서도 존재하는 차이인지를 통계적으로 뒷받침함.</p>
+                
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">왜 Log-Rank 검정인가?</h3>
+                <p class="mb-4 text-xl font-bold">Log-rank 검정은 각 사건 발생 시점에서 각 그룹의 관찰된 사건 수와 기대되는 사건 수를 비교하여 그룹 간의 생존 패턴 차이를 평가함. 중도 절단된 데이터가 포함된 생존 자료에서 그룹 간의 차이를 평가하는 데 매우 효과적이며, Kaplan-Meier 곡선과 함께 가장 널리 사용되는 방법임. 특히, 두 그룹의 위험비(Hazard Ratio)가 시간에 걸쳐 일정하다는 가정이 합리적일 때 강력한 검정력을 가짐.</p>
+
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">가설</h3>
+                <ul class="list-disc list-inside mb-4 space-y-1">
+                    <li><strong class="text-blue-600 text-xl font-bold">귀무 가설:</strong> 두 그룹의 생존 곡선은 동일함. (즉, 그룹 간 생존율에 통계적으로 유의미한 차이가 없음)</li>
+                    <li><strong class="text-blue-600 text-xl font-bold">대립 가설:</strong> 두 그룹의 생존 곡선은 다름. (즉, 그룹 간 생존율에 통계적으로 유의미한 차이가 있음)</li>
+                </ul>
+
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">원리</h3>
+                <p class="mb-4 text-xl font-bold">Log-rank 검정은 모든 사건 발생 시점(또는 관찰 종료 시점)에서 각 그룹의 위험군(number at risk)을 고려하여 사건 발생 수를 비교함. 각 시점에서 그룹별로 기대되는 사건 수를 계산하고, 실제 관찰된 사건 수와의 차이를 합산하여 검정 통계량(일반적으로 카이제곱 통계량)을 산출함. 이 통계량의 p-값을 통해 귀무 가설의 기각 여부를 결정함.</p>
+
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">실습 (R): Log-Rank 검정 수행</h3>
+                <p class="mb-4 text-xl font-bold">앞서 '소개' 탭의 Kaplan-Meier 실습에서 사용한 가상 환자 데이터를 이용하여 Log-Rank 검정을 수행하는 R 코드임.</p>
+                <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                    <pre><code># library(survival) # 이미 로드되어 있다고 가정
+# patient_data, surv_object 생성 코드는 '소개' 탭의 Kaplan-Meier 실습 페이지 참고
+
+# Log-rank 검정 수행 (survdiff 함수 사용)
+# formula: 생존 객체 ~ 그룹 변수
+logrank_test_result <- survdiff(surv_object ~ group, data = patient_data)
+
+# 결과 요약 (검정 통계량, 자유도, p-값 출력)
+print(logrank_test_result)
+
+# p-값 해석:
+# p-값이 유의수준(일반적으로 0.05)보다 작으면 귀무 가설을 기각하고, 그룹 간 생존 곡선에 유의미한 차이가 있다고 결론 내림.
+# p-값이 유의수준보다 크면 귀무 가설을 기각할 수 없으며, 그룹 간 유의미한 차이가 없다고 결론 내림.
+</code></pre>
+                </div>
+                <p class="mb-6 text-gray-600 text-xl font-bold">위 코드를 실행하여 결과를 확인하기. 생성된 그래프를 통해 각 그룹의 생존 확률이 시간에 따라 어떻게 변화하는지, 그리고 두 그룹의 생존 곡선이 시각적으로 어떻게 다른지 파악할 수 있음.</p>
+
+                <div class="text-center mb-6">
+                    <span class="font-semibold mr-4 text-xl font-bold">사례 데이터 비교:</span>
+                    <select id="km-group-selector-logrank" class="p-2 border rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-xl font-bold">
+                        <option value="delay" selected>치료 지연 여부</option>
+                        <option value="reduction">용량 감소 여부</option>
+                    </select>
+                </div>
+
+                <div class="chart-container mb-4">
+                    <canvas id="kmChartLogRank"></canvas>
+                </div>
+                <div id="km-result-logrank" class="text-center font-bold text-xl p-4 bg-blue-50 rounded-lg"></div>
+            </div>
+
+            <div id="cox_model" class="content-section p-4 md:p-6 bg-white rounded-xl shadow-md">
+                <h2 class="text-2xl font-bold mb-2">Cox 비례 위험 모형</h2>
+                <p class="mb-4 text-xl font-bold">Cox 비례 위험 모형은 생존 시간에 영향을 미치는 여러 공변량(covariates)들의 효과를 동시에 분석하고, 각 공변량이 사건 발생 위험에 미치는 영향을 위험비(Hazard Ratio, HR)로 정량화하는 반모수적(semi-parametric) 모형임.</p>
+                
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">왜 Cox 모델인가?</h3>
+                <p class="mb-4 text-xl font-bold">Log-rank 검정은 두 그룹 간의 생존 곡선 차이만을 보여줄 뿐, 특정 변수(예: 나이, 질병 단계)가 생존에 미치는 개별적인 영향을 통제하면서 분석하기는 어려움. Cox 모델은 이러한 여러 공변량의 영향을 동시에 고려하여 각 변수의 독립적인 효과를 추정하고, 위험비(HR)라는 직관적인 지표를 제공하여 임상적 해석을 용이하게 함. 또한, 기저 위험 함수(h_0(t))의 형태를 특정 분포로 가정하지 않는 '반모수적' 특성으로 인해 다양한 데이터에 유연하게 적용될 수 있음.</p>
+
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">비례 위험 가정 (Proportional Hazards Assumption)</h3>
+                <p class="mb-4 text-xl font-bold">Cox 모형의 핵심 가정으로, 모델에 포함된 공변량에 따른 위험비(HR)가 시간에 관계없이 일정하다는 가정임. 즉, 두 그룹(또는 변수의 다른 수준) 간의 위험률 비율이 추적 기간 내내 일정하게 유지된다는 것을 의미함. 이 가정이 충족되는지 확인하는 것이 매우 중요하며, 위배될 경우 층화 Cox 모형이나 시간 의존적 Cox 모형과 같은 대안을 고려해야 함.</p>
+
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">위험비 (Hazard Ratio, HR)의 해석</h3>
+                <p class="mb-4 text-xl font-bold">위험비(HR)는 특정 공변량의 한 수준이 다른 수준에 비해 사건 발생 위험을 얼마나 변화시키는지 나타내는 비율임.</p>
+                <ul class="list-disc list-inside mb-4 space-y-1">
+                    <li><strong class="text-blue-600 text-xl font-bold">HR > 1:</strong> 해당 공변량의 값이 증가할수록(또는 특정 범주에 속할수록) 사건 발생 위험이 증가함. (예: HR 1.5는 위험이 50% 증가함을 의미)</li>
+                    <li><strong class="text-blue-600 text-xl font-bold">HR < 1:</strong> 해당 공변량의 값이 증가할수록(또는 특정 범주에 속할수록) 사건 발생 위험이 감소함. (예: HR 0.8은 위험이 20% 감소함을 의미)</li>
+                    <li><strong class="text-blue-600 text-xl font-bold">HR = 1:</strong> 해당 공변량은 사건 발생 위험에 영향을 미치지 않음.</li>
+                </ul>
+
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">실습 (R): Cox 비례 위험 모형 적합</h3>
+                <p class="mb-4 text-xl font-bold">췌장암 연구 사례를 바탕으로 가상의 데이터를 활용한 Cox 모델 R 코드임. 아래 변수 버튼을 클릭하여 각 변수의 위험비를 확인하기.</p>
+                <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                    <pre><code># 가상 췌장암 환자 데이터 (예제)
+patient_data_cox <- data.frame(
+  time = c(10, 15, 20, 25, 30, 12, 18, 22, 28, 35, 8, 14, 19, 23, 27),
+  event = c(1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1),
+  age = c(65, 70, 60, 72, 68, 55, 75, 62, 69, 58, 63, 71, 59, 66, 73),
+  tumor_size = c(2.5, 3.1, 1.8, 4.0, 2.2, 1.5, 3.5, 2.0, 2.8, 1.9, 2.1, 3.0, 1.7, 2.6, 3.2),
+  therapy = c(1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1)
+)
+
+# library(survival) # 이미 로드되어 있다고 가정
+
+# Cox 비례 위험 모형 적합 (coxph 함수 사용)
+fit_cox <- coxph(Surv(time, event) ~ age + therapy + tumor_size, data = patient_data_cox)
+
+# 결과 요약 (계수, 표준 오차, z-값, p-값, 위험비(HR), 신뢰구간 출력)
+summary(fit_cox)
+
+# 비례 위험 가정 검정 (cox.zph 함수 사용)
+cox.zph_result <- cox.zph(fit_cox)
+print(cox.zph_result)
+# 결과 예시:
+#           chisq df    p
+# age       1.047  1 0.31
+# therapy   0.486  1 0.49
+# tumor_size 1.241  1 0.27
+# GLOBAL    2.774  3 0.43 (전체 모델에 대한 비례 위험 가정 검정 결과)
+# p-값이 유의수준(0.05)보다 크면 비례 위험 가정을 만족한다고 해석함.
+</code></pre>
+                </div>
+
+                <!-- New R code block for graphical proportional hazards check -->
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 mt-8 text-xl font-bold">비례 위험 가정 확인 (R 코드)</h3>
+                <p class="mb-4 text-xl font-bold">아래 R 코드는 `survminer` 패키지의 `ggcoxzph` 함수를 사용하여 Cox 모델의 비례 위험 가정을 그래프로 확인하는 방법을 보여줌. 각 공변량에 대한 곡선이 수평선(또는 0에 가까운 기울기)에 가깝고, p-값이 유의하지 않다면 비례 위험 가정이 만족된다고 해석할 수 있음.</p>
+
+
+                <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                    <pre><code># Cox 비례 위험 모형 적합 (fit_cox는 이미 적합됨)
+# fit_cox <- coxph(Surv(time, event) ~ age + therapy + tumor_size, data = patient_data_cox)
+
+#################
+# 비례 위험 가정 체크
+#################
+# library(survminer) # 이미 로드되어 있다고 가정
+
+# cox.zph 함수로 비례 위험 가정 검정 결과 객체 생성
+cox.zph.fit <- cox.zph(fit_cox)
+summary(cox.zph.fit)
+
+# ggcoxzph 함수로 비례 위험 가정 그래프 그리기
+# 이 함수는 각 공변량에 대한 쇼엔펠드 잔차(Schoenfeld residuals)의 플롯을 생성하며,
+# 시간에 따른 잔차의 패턴을 통해 비례 위험 가정을 시각적으로 평가할 수 있도록 돕음.
+ggcoxzph(cox.zph.fit)
+
+
+
+# 참고
+#################
+# 선형성 가정 체크
+#################
+# 선형성 가정이란 각 연속형 변수와 로그-위험(log-hazard) 간의 관계가 선형적(직선)이라는 것을 의미함.
+   이 가정은 주로 마팅게일 잔차(Martingale residuals)를 이용하여 시각적으로 확인함. 
+   마팅게일 잔차와 각 연속형 예측 변수를 산점도로 나타냈을 때, 잔차들이 특별한 패턴 없이 0을 중심으로 무작위로 흩어져 있고, 
+   추세선(예: loess 곡선)이 수평에 가깝다면 선형성 가정을 만족한다고 볼 수 있음.
+#################
+
+
+# 마팅게일 잔차 계산
+# type = "martingale"이 기본값이지만 명시적으로 표기
+patient_data_cox$martingale_residual <- residuals(fit_cox, type = "martingale")
+
+
+# --- age 변수의 선형성 가정 확인 ---
+# 방법 1: Base R의 plot 함수 사용
+plot(patient_data_cox$age, patient_data_cox$martingale_residual,
+     xlab = "Age",
+     ylab = "Martingale Residuals",
+     main = "Martingale Residuals vs. Age")
+abline(h = 0, col = "red", lty = 2) # y=0 기준선 추가
+lines(lowess(patient_data_cox$age, patient_data_cox$martingale_residual), col = "blue") # loess 곡선 추가
+
+
+
+# 방법 2: ggplot2 패키지 사용 (더 나은 시각화)
+ggplot(patient_data_cox, aes(x = age, y = martingale_residual)) +
+  geom_point() +
+  geom_smooth(method = "loess", se = FALSE) + # loess 곡선 추가 (se=FALSE는 신뢰구간 미표시)
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Martingale Residuals vs. Age",
+       x = "Age",
+       y = "Martingale Residuals") +
+  theme_minimal()
+
+
+
+# --- tumor_size 변수의 선형성 가정 확인 ---
+
+# 방법 1: Base R의 plot 함수 사용 (기존 코드의 레이블 오류 수정)
+plot(patient_data_cox$tumor_size, patient_data_cox$martingale_residual,
+     xlab = "Tumor Size",
+     ylab = "Martingale Residuals",
+     main = "Martingale Residuals vs. Tumor Size")
+abline(h = 0, col = "red", lty = 2)
+lines(lowess(patient_data_cox$tumor_size, patient_data_cox$martingale_residual), col = "blue")
+
+# 방법 2: ggplot2 패키지 사용
+ggplot(patient_data_cox, aes(x = tumor_size, y = martingale_residual)) +
+  geom_point() +
+  geom_smooth(method = "loess", se = FALSE) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Martingale Residuals vs. Tumor Size",
+       x = "Tumor Size",
+       y = "Martingale Residuals") +
+  theme_minimal()
+
+
+
+</code></pre>
+                </div>
+                
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <button class="cox-var-btn p-3 bg-gray-100 rounded-lg hover:bg-blue-100 transition text-xl font-bold" data-var="age">나이 (1년 증가)</button>
+                    <button class="cox-var-btn p-3 bg-gray-100 rounded-lg hover:bg-blue-100 transition text-xl font-bold" data-var="tumor_size">종양 크기 (1cm 증가)</button>
+                    <button class="cox-var-btn p-3 bg-gray-100 rounded-lg hover:bg-blue-100 transition text-xl font-bold" data-var="therapy">치료법 (RT vs CIRT)</button>
+                </div>
+
+                <div id="cox-result" class="p-6 note rounded-lg">
+                    <h3 class="font-bold text-lg mb-2 text-xl font-bold">분석 결과</h3>
+                    <p id="cox-interpretation" class="text-xl font-bold">분석할 변수를 선택해 보십시오.</p>
+                </div>
+
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 mt-8 text-xl font-bold">Forest Plot</h3>
+                <div class="chart-container mb-4">
+                    <canvas id="forestPlotChart"></canvas>
+                </div>
+                <div class="text-center text-sm text-gray-600 mt-2 text-xl font-bold">
+                    <p>Forest Plot: 각 변수의 위험비(HR)와 95% 신뢰구간을 보여줌. 점은 HR, 가로 막대는 신뢰구간을 나타냄. 세로 점선은 HR=1 (효과 없음)을 의미함.</p>
+                </div>
+
+                <!-- Forest Plot R Code Block -->
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 mt-8 text-xl font-bold">Forest Plot R 코드</h3>
+                <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                    <pre><code># Forest Plot을 위한 데이터 추출 및 가공
+# coef(): 계수, confint(): 신뢰구간
+hr_results <- as.data.frame(exp(coef(fit_cox))) # 위험비 (HR)
+ci_results <- as.data.frame(exp(confint(fit_cox))) # 95% 신뢰구간 (HR의 CI)
+ 
+# 데이터 프레임 합치기
+# coef()의 결과 순서에 맞춰 변수명 지정 (일반적으로 formula에 명시된 순서)
+forest_data <- data.frame(
+  Variable = c("age", "tumor_size", "therapy"), 
+  HR = hr_results[,1],
+  Lower_CI = ci_results[,1],
+  Upper_CI = ci_results[,2]
+)
+ 
+# 변수명 보기 좋게 변경 (Forest Plot Y축 레이블)
+forest_data$Variable <- c("나이 (1년 증가)", "치료법 (1 vs 0)", "종양 크기 (1cm 증가)")
+
+# ggplot2를 이용한 Forest Plot 그리기
+ggplot(forest_data, aes(y = Variable, x = HR, xmin = Lower_CI, xmax = Upper_CI)) +
+  geom_pointrange(aes(color = ifelse(Lower_CI > 1 | Upper_CI < 1, "Significant", "Non-significant")), size = 1.2) + # HR 점 및 CI 막대
+  geom_vline(xintercept = 1, linetype = "dashed", color = "gray", size = 0.8) + # HR=1 기준선
+  scale_x_log10(limits = c(0.1, 100), breaks = c(0.1, 1, 10, 100)) + # X축 로그 스케일 및 범위 조정
+  scale_color_manual(values = c("Significant" = "#3B82F6", "Non-significant" = "#6B7280")) + # 유의성에 따른 색상
+  labs(title = "Cox 모델 Forest Plot", x = "위험비 (Hazard Ratio)", y = NULL) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(), # Y축 주 그리드 라인 제거
+    panel.grid.minor.y = element_blank(), # Y축 보조 그리드 라인 제거
+    axis.text.y = element_text(size = 12), # Y축 텍스트 크기
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)), # X축 제목
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"), # 제목 중앙 정렬
+    legend.position = "none" # 범례 숨기기
+  )</code></pre>
+                </div>
+            </div>
+
+            <div id="advanced_models" class="content-section p-4 md:p-6 bg-white rounded-xl shadow-md">
+                <div class="sub-page" data-page="1">
+                    <h2 class="text-2xl font-bold mb-4">고급 모델: 층화 Cox 모형 (Stratified Cox Model)</h2>
+                    <p class="mb-4 text-xl font-bold">층화 Cox 모형은 특정 공변량이 Cox 모델의 핵심 가정인 **비례 위험 가정(Proportional Hazards Assumption)을 위배할 때** 사용되는 유용한 방법임. 이 모델은 비례 위험 가정을 위배하는 변수를 '층화 변수(stratifying variable)'로 지정하여, 각 층(stratum) 내에서는 비례 위험 가정을 만족하지만, 층 간에는 기저 위험 함수가 다를 수 있도록 허용함.</p>
+                    <p class="mb-4 text-xl font-bold">
+                        <strong class="text-blue-600 text-xl font-bold">주요 특징:</strong>
+                    </p>
+                    <ul class="list-disc list-inside mb-4 space-y-1">
+                        <li>층화 변수 자체의 위험비는 추정되지 않음. 대신, 각 층 내에서 다른 공변량들의 위험비가 추정됨.</li>
+                        <li>비례 위험 가정을 위배하는 변수를 모델에 포함하면서도, 다른 변수들의 효과를 정확하게 추정할 수 있어 모델의 적합성을 높임.</li>
+                    </ul>
+                    <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">실습 (R): 층화 Cox 모형 적합 (종양 크기 기준)</h3>
+                    <p class="mb-4 text-xl font-bold">종양 크기(tumor_size)를 기준으로 2.5cm를 cutoff value로 나누어 층화 분석을 수행하는 예시임. 이 방법은 특정 변수가 비례 위험 가정을 만족하지 않을 때 유용함.</p>
+                    <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                        <pre><code># library(survival) # 이미 로드되어 있다고 가정
+# patient_data_cox (앞 페이지 참고)
+
+# 종양 크기를 기준으로 그룹 생성 (예: 2.5cm 초과/이하)
+patient_data_cox$tumor_size_group <- ifelse(patient_data_cox$tumor_size > 2.5, "Large", "Small")
+patient_data_cox$tumor_size_group <- factor(patient_data_cox$tumor_size_group, levels = c("Small", "Large"))
+
+# 층화 Cox 모형 적합: strata() 함수를 사용하여 층화 변수 지정
+# tumor_size_group 변수를 층화 변수로 사용하고, age, therapy는 공변량으로 포함
+fit_stratified_cox_tumor <- coxph(Surv(time, event) ~ age + therapy + strata(tumor_size_group), data = patient_data_cox)
+
+# 결과 요약
+summary(fit_stratified_cox_tumor)
+
+# 결과 해석: tumor_size_group 변수에 대한 위험비는 나타나지 않으며,
+# age, therapy 변수의 위험비는 tumor_size_group의 각 층 내에서 추정됨.
+# 이는 종양 크기 그룹별로 기저 위험 함수가 다를 수 있음을 허용하면서,
+# 다른 변수들의 효과를 평가하는 데 사용됨.
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="sub-page" data-page="2">
+                    <h2 class="text-2xl font-bold mb-4">고급 모델: 시간 의존적 공변량 (Time-dependent Covariates)</h2>
+                    <p class="mb-4 text-xl font-bold">시간 의존적 공변량은 공변량의 '값' 자체가 시간에 따라 변화하는 경우를 다룸. 예를 들어, 환자의 혈압 수치가 시간이 지남에 따라 변하거나, 치료 도중 새로운 약물을 추가/중단하는 경우임. 이러한 데이터는 각 환자의 추적 기간을 여러 구간으로 '분할 데이터셋(split data set)' 형태로 구성하여 분석함.</p>
+                    <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">스탠포드 병원 심장이식 사례 (1984) 그림 설명</h3>
+                    <p class="mb-4 text-xl font-bold">
+                        이 그림은 스탠포드 심장 이식 연구에서 환자들의 추적 기간과 이식 수술(시간 의존적 공변량)의 개념을 시각적으로 보여줌.
+                        각 수평선은 한 환자의 추적 기간을 나타내며, 하트(♥)는 이식 수술 시점, 단검(†)은 사망 시점, 엑스(✖)는 중도 절단 시점을 의미함.
+                        '환자 2'와 '환자 3'처럼 한 환자에 대해 여러 줄의 막대가 있는 경우, 이는 이식 전 기간과 이식 후 기간으로 데이터가 분할되어 분석됨을 나타냄.
+                        이를 통해 이식 수술과 같이 시간에 따라 변하는 요인을 생존 분석에 어떻게 반영하는지 이해할 수 있음.
+                    </p>
+                    <div class="stanford-timeline-container timeline-container">
+                        <div class="time-axis text-xl font-bold">
+                            <span>0</span>
+                            <span>5</span>
+                            <span>10</span>
+                            <span>15</span>
+                            <span>20 (개월)</span>
+                        </div>
+                        <!-- Patient 1: No transplant, dies at 10 months -->
+                        <div class="timeline-item">
+                            <span class="timeline-label text-xl font-bold">환자 1</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar event-end" style="width: calc(10 / 20 * 100%);"></div>
+                                <div class="status-marker event" style="left: calc(10 / 20 * 100%);">†</div> <!-- Death -->
+                            </div>
+                        </div>
+                        <!-- Patient 2: Transplant at 8 months, dies at 15 months -->
+                        <div class="timeline-item">
+                            <span class="timeline-label text-xl font-bold">환자 2 (이식 전)</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar transplant-event" style="width: calc(8 / 20 * 100%);"></div>
+                                <div class="status-marker transplant" style="left: calc(8 / 20 * 100%);">♥</div> <!-- Transplant -->
+                            </div>
+                        </div>
+                        <div class="timeline-item mt-[-5px]"> <!-- Slightly closer to previous segment -->
+                            <span class="timeline-label text-xl font-bold">환자 2 (이식 후)</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar transplant-post-event" style="width: calc((15-8) / 20 * 100%); left: calc(8 / 20 * 100%);"></div>
+                                <div class="status-marker event" style="left: calc(15 / 20 * 100%);">†</div> <!-- Death -->
+                            </div>
+                        </div>
+                        <!-- Patient 3: Transplant at 5 months, censored at 10 months -->
+                        <div class="timeline-item">
+                            <span class="timeline-label text-xl font-bold">환자 3 (이식 전)</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar transplant-event" style="width: calc(5 / 20 * 100%);"></div>
+                                <div class="status-marker transplant" style="left: calc(5 / 20 * 100%);">♥</div> <!-- Transplant -->
+                            </div>
+                        </div>
+                        <div class="timeline-item mt-[-5px]">
+                            <span class="timeline-label text-xl font-bold">환자 3 (이식 후)</span>
+                            <div class="timeline-bar-wrapper">
+                                <div class="timeline-bar censored-end" style="width: calc((10-5) / 20 * 100%); left: calc(5 / 20 * 100%);"></div>
+                                <div class="status-marker censored" style="left: calc(10 / 20 * 100%);">✖</div> <!-- Censored -->
+                            </div>
+                        </div>
+                        <!-- Legend for this specific diagram -->
+                        <div class="flex justify-center mt-4 gap-4">
+                            <div class="legend-item text-xl font-bold">
+                                <div class="legend-color-box bg-blue-500"></div> 사망
+                            </div>
+                            <div class="legend-item text-xl font-bold">
+                                <div class="legend-color-box bg-red-500"></div> 중도 절단
+                            </div>
+                            <div class="legend-item text-xl font-bold">
+                                <div class="legend-color-box bg-blue-400"></div> 이식 수술
+                            </div>
+                        </div>
+                        <p class="mt-2 text-sm text-gray-600 text-xl font-bold text-center">시간 의존적 공변량 자료 예시: 하트(♥)는 이식 수술, 단검(†)은 사망, 엑스(✖)는 중도 절단을 의미함.</p>
+                    </div>
+                    <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                        <pre><code># library(survival) # 이미 로드되어 있다고 가정
+
+# 1. 시간 의존적 공변량을 위한 시뮬레이션 데이터 생성 (n=100)
+set.seed(123)
+n_patients <- 100
+max_followup <- 365 * 5 # 최대 5년 (일)
+
+# 환자별 기본 정보 생성
+patient_ids <- 1:n_patients
+age <- round(rnorm(n_patients, mean = 60, sd = 10))
+surgery <- rbinom(n_patients, 1, 0.5) # 수술 여부 (0=없음, 1=있음)
+
+# 각 환자별 최종 관찰 시간 (이벤트 또는 중도절단)
+final_obs_time <- round(runif(n_patients, min = 100, max = max_followup))
+
+# 이식 발생 시점 (모든 환자가 이식받는 것은 아님)
+# 이식 시점은 최종 관찰 시간보다 작아야 함 (이식 후 관찰이 가능해야 함)
+time_to_transplant <- round(runif(n_patients, min = 50, max = max_followup * 0.8))
+# 이식 여부 결정 (대략 50% 정도 이식받는다고 가정)
+has_transplant <- rbinom(n_patients, 1, 0.5)
+time_to_transplant[has_transplant == 0] <- Inf # 이식 안 받으면 무한대
+
+# 시간 의존적 데이터셋 초기화
+tdc_data_list <- list()
+
+for (i in 1:n_patients) {
+  id <- patient_ids[i]
+  p_age <- age[i]
+  p_surgery <- surgery[i]
+  p_final_obs_time <- final_obs_time[i]
+  p_time_to_transplant <- time_to_transplant[i]
+
+  if (p_time_to_transplant < p_final_obs_time) { # 이식 발생
+    # 이식 전 기간
+    tdc_data_list[[length(tdc_data_list) + 1]] <- data.frame(
+      id = id,
+      start = 0,
+      stop = p_time_to_transplant,
+      event = 0, # 이식 전에는 관심 사건(사망) 없음
+      transplant = 0, # 이식 전 상태
+      age = p_age,
+      surgery = p_surgery
+    )
+    # 이식 후 기간
+    # 이식 후 최종 관찰 시간까지의 이벤트 발생 여부 시뮬레이션
+    event_after_transplant <- rbinom(1, 1, 0.3) # 이식 후 사망 확률 30% 가정
+    tdc_data_list[[length(tdc_data_list) + 1]] <- data.frame(
+      id = id,
+      start = p_time_to_transplant,
+      stop = p_final_obs_time,
+      event = event_after_transplant,
+      transplant = 1, # 이식 후 상태
+      age = p_age,
+      surgery = p_surgery
+    )
+  } else { # 이식 발생 안 함 (또는 최종 관찰 시간 이후 발생)
+    # 전체 기간
+    event_no_transplant <- rbinom(1, 1, 0.2) # 이식 안 받은 경우 사망 확률 20% 가정
+    tdc_data_list[[length(tdc_data_list) + 1]] <- data.frame(
+      id = id,
+      start = 0,
+      stop = p_final_obs_time,
+      event = event_no_transplant,
+      transplant = 0, # 이식 안 받은 상태
+      age = p_age,
+      surgery = p_surgery
+    )
+  }
+}
+
+patient_data_tdc <- do.call(rbind, tdc_data_list)
+
+# Cox 모델 적합 (시간 의존적 공변량을 포함하는 Surv(start, stop, event) 형식 사용)
+# Surv(start, stop, event)는 각 기간별로 생존 상태를 추적함.
+fit_tdc_cox <- coxph(Surv(start, stop, event) ~ transplant + age + surgery, data = patient_data_tdc)
+
+# 결과 요약
+summary(fit_tdc_cox)
+
+# 결과 해석:
+# transplant 변수의 위험비(HR)는 이식 후 기간 동안의 상대적인 위험 변화를 나타냄.
+# HR < 1 이고 p-값이 유의하다면, 이식 수술이 사망 위험을 유의미하게 낮춘다고 해석할 수 있음.
+# 이 모델은 환자의 이식 상태가 시간에 따라 변하는 것을 반영하여,
+# 이식 수술의 효과를 보다 정확하게 평가할 수 있도록 함.
+</code></pre>
+                    </div>
+                    <p class="mb-4 mt-6 text-xl font-bold">
+                        <strong class="text-blue-600 text-xl font-bold">시간 의존적 공변량을 고정 변수로 분석할 때의 문제점:</strong>
+                        시간에 따라 값이 변하는 공변량(예: 이식 여부)을 단순히 환자의 최종 상태나 초기 상태를 기준으로 고정된 독립 변수처럼 분석하면 심각한 통계적 문제가 발생할 수 있음. 이러한 잘못된 접근 방식은 다음과 같은 문제를 초래함:
+                    </p>
+                    <ul class="list-disc list-inside mb-4 ml-4 space-y-1">
+                        <li><strong class="text-xl font-bold">편향된 위험비(HR) 추정:</strong> 이식과 같은 사건이 발생하기 전의 기간과 후의 기간을 구분하지 않고 하나의 변수로 처리하면, 해당 변수의 효과가 과대 또는 과소평가될 수 있음.</li>
+                        <li><strong class="text-xl font-bold">생존자 편향 (Survivor Bias):</strong> 이식 수술을 받은 환자들만이 이식 후 생존 기간을 가질 수 있으므로, 이식 수술 자체를 '생존'의 결과로 오인하여 편향된 결과를 초래할 수 있음. 즉, 이식 수술을 받을 만큼 오래 생존한 환자들이 이식 후에도 더 오래 생존하는 것처럼 보이는 '생존자 편향'이 발생할 수 있음.</li>
+                        <li><strong class="text-xl font-bold">생존 분석 가정 위배:</strong> 시간에 따라 변하는 위험률 패턴을 무시하게 되어, Cox 모델의 비례 위험 가정(Proportional Hazards Assumption)을 위배할 가능성이 커짐.</li>
+                        <li><strong class="text-xl font-bold">잘못된 임상적 결론:</strong> 편향된 결과는 치료 효과나 위험 인자에 대한 잘못된 임상적 결론으로 이어질 수 있음.</li>
+                    </ul>
+                    <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">실습 (R): 시간 의존적 공변량을 고정 변수로 분석하는 잘못된 예시</h3>
+                    <p class="mb-4 text-xl font-bold">아래 R 코드는 위에서 시뮬레이션한 데이터를 변형하여, 이식 여부를 고정된 독립 변수처럼 분석했을 때의 예시를 보여줌. 이 방식은 실제 임상 상황을 제대로 반영하지 못하는 문제점이 있음.</p>
+                    <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                        <pre><code># 시간 의존적 공변량을 고정 변수처럼 분석할 때의 문제점 예시
+# (이 방법은 잘못된 분석이며, 실제 연구에서는 사용해서는 안 됨을 강조)
+
+# 1. 시간 의존적 데이터를 고정 변수 형식으로 변환 (잘못된 접근 방식)
+# 각 환자의 최종 관찰 시간과 최종 사건 발생 여부,
+# 그리고 '이식 수술을 받았는지 여부'를 고정된 변수로 간주
+patient_data_fixed_transplant <- data.frame()
+for (id_val in unique(patient_data_tdc$id)) {
+  patient_subset <- patient_data_tdc[patient_data_tdc$id == id_val, ]
+  
+  # 최종 관찰 시간과 최종 이벤트 상태
+  final_time <- max(patient_subset$stop)
+  final_event <- patient_subset$event[which.max(patient_subset$stop)]
+  
+  # 이식 수술을 받았는지 여부 (추적 기간 중 한 번이라도 이식 상태가 1이었으면 1)
+  ever_transplanted <- as.numeric(any(patient_subset$transplant == 1))
+  
+  # 기준 시점의 공변량 (첫 번째 레코드에서 가져옴)
+  base_age <- patient_subset$age[1]
+  base_surgery <- patient_subset$surgery[1]
+  
+  patient_data_fixed_transplant <- rbind(patient_data_fixed_transplant, 
+                                         data.frame(id = id_val, 
+                                                    time = final_time, 
+                                                    event = final_event, 
+                                                    transplant = ever_transplanted,
+                                                    age = base_age,
+                                                    surgery = base_surgery))
+}
+
+# library(survival) # 이미 로드되어 있다고 가정
+
+# Cox 모델 적합 (시간 의존성을 무시하고 고정 변수처럼 분석)
+# Surv(time, event) 형식은 공변량이 시간에 따라 변하지 않는다고 가정함.
+fit_fixed_transplant_cox <- coxph(Surv(time, event) ~ transplant + age + surgery, data = patient_data_fixed_transplant)
+
+# 결과 요약
+summary(fit_fixed_transplant_cox)
+
+# 결과 해석 시 주의:
+# 이 모델은 'transplant' 변수의 시간 의존적 특성을 반영하지 못하므로,
+# 위험비(HR) 추정치에 편향이 발생할 수 있으며, 잘못된 결론으로 이어질 수 있음.
+# 예를 들어, 이식 전 기간의 생존 정보가 무시되거나, 이식 후 사망한 환자가
+# 이식 수술의 위험성을 과대평가하는 것처럼 보일 수 있음.
+# 특히, 이식 수술을 받을 만큼 오래 생존한 환자들이 이식 후에도 더 오래 생존하는 것처럼 보이는
+# '생존자 편향(Survivor Bias)'이 발생할 수 있음.
+# 따라서 시간 의존적 공변량은 반드시 Surv(start, stop, event) 형식으로 분석해야 함.
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="sub-page" data-page="3">
+                    <h2 class="text-2xl font-bold mb-4">고급 모델: 시간 가변 회귀계수 (Time varying coefficient)</h2>
+                    <p class="mb-4 text-xl font-bold">시간 가변 회귀계수(Time-Varying Coefficient)는 공변량의 '효과(위험비)'가 시간에 따라 달라지는 경우를 모델링함. 공변량 자체는 시간에 따라 변하지 않을 수 있지만, 그 영향력이 시간에 따라 변할 때 사용함. 예를 들어, 특정 치료법의 효과가 초기에는 크다가 시간이 지남에 따라 줄어들거나, 반대로 시간이 지날수록 효과가 더 커지는 경우임.</p>
+                    <p class="mb-4 text-xl font-bold">아래 슬라이더를 조작하여 심장 이상 반응(MACE) 발생 위험에 대한 그룹 효과가 730일을 기준으로 어떻게 달라지는지 확인해 보십시오.</p>
+                    <div class="flex items-center justify-center space-x-4 mb-4">
+                        <span class="text-xl font-bold">초기 (t < 730일)</span>
+                        <input type="range" min="0" max="1" value="0" id="time-slider" class="w-32">
+                        <span class="text-xl font-bold">후기 (t ≥ 730일)</span>
+                    </div>
+                    <div id="time-dependent-result" class="text-center font-bold text-xl p-4 bg-blue-50 rounded-lg"></div>
+                    <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">실습 (R): 시간 가변 계수 Cox 모형</h3>
+                    <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                        <pre><code># library(survival) # 이미 로드되어 있다고 가정
+# pbc 데이터셋 예시 (Primary Biliary Cirrhosis, R 내장 데이터셋)
+  data(pbc)
+
+# hepato (간 비대 유무) 변수의 효과가 시간에 따라 달라진다고 가정하고 모델 적합
+# tt() 함수를 사용하여 시간 가변 계수 생성: tt(변수)는 변수와 시간 간의 상호작용 항을 생성함.
+  Result_tdc <- coxph(Surv(time, status==2) ~ age + hepato + tt(hepato), data=pbc, tt=function(x, t,...) x*t )
+
+# 결과 요약 (tt(hepato)의 p-값을 통해 시간 가변 계수의 유의성 판단)
+  summary(Result_tdc)
+
+# 결과 해석: tt(hepato)의 p-값이 유의하면 hepato의 효과가 시간에 따라 유의미하게 변한다고 해석함.
+# 만약 유의하지 않다면, hepato의 효과는 시간에 따라 일정하다고 볼 수 있음.
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="sub-page" data-page="4">
+                    <h2 class="text-2xl font-bold mb-4">고급 모델: 경쟁 위험 (Competing Risks) 및 다중 사건</h2>
+                    <p class="mb-4 text-xl font-bold">생존 분석에서 **경쟁 위험(Competing Risks)**은 환자가 관심 사건(예: 특정 질병으로 인한 사망) 외에 다른 사건(예: 다른 원인으로 인한 사망)을 경험하여 관심 사건의 발생을 막는 상황을 말함. 예를 들어, 암 환자가 암으로 사망하기 전에 심장마비로 사망할 수 있다면, 심장마비는 암 사망에 대한 경쟁 위험이 됨.</p>
+                    <p class="mb-4 text-xl font-bold">일반적인 생존 분석(Kaplan-Meier, Cox)은 하나의 사건만을 고려하므로, 경쟁 위험이 존재할 경우 관심 사건의 발생 확률을 과대평가하거나 왜곡된 결과를 초래할 수 있음. 경쟁 위험 분석은 각 사건 유형에 대한 **누적 발생 확률(Cumulative Incidence Function, CIF)**을 추정하여 이를 해결함.</p>
+                    <p class="mb-4 text-xl font-bold">아래 차트는 전립선암 환자 연구에서 '전립선암 사망'과 '심혈관 질환 사망'이라는 두 가지 경쟁 위험에 대한 누적 발생 확률(CIF)을 보여줌. CIF 곡선은 **계단형**으로 나타나며, 특정 시점까지 각 사건이 발생할 누적 확률을 나타냄. 체크박스를 통해 보고 싶은 사망 원인을 선택하여 비교해 보십시오.</p>
+                    <div class="flex justify-center space-x-6 mb-4">
+                        <label class="flex items-center text-xl font-bold"><input type="checkbox" id="comp-risk-cancer" class="mr-2" checked> 전립선암 사망</label>
+                        <label class="flex items-center text-xl font-bold"><input type="checkbox" id="comp-risk-cvd" class="mr-2" checked> 심혈관질환 사망</label>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="competingRiskChart"></canvas>
+                    </div>
+                    <p class="mt-4 text-gray-600 note p-3 rounded-lg text-xl font-bold">
+                        <strong class="text-gray-800 text-xl font-bold">참고: 다중 사건 (Multiple Events)</strong><br>
+                        '다중 사건'이라는 용어는 넓은 의미에서 여러 유형의 사건을 다루는 경쟁 위험을 포함하지만, 때로는 동일한 개체에서 반복적으로 발생하는 사건(예: 질병 재발, 감염 에피소드)을 분석하는 '재발 사건(Recurrent Events)' 분석을 의미하기도 함. 재발 사건 분석은 각 사건 발생 시점마다 위험군이 재설정되는 복잡한 모델링을 필요로 함. 본 앱에서는 경쟁 위험을 통해 여러 유형의 사건 발생을 다루는 예시를 보여줌.
+                    </p>
+                    <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">실습 (R): 경쟁 위험 모형 (Fine & Gray Model)</h3>
+                    <p class="mb-4 text-xl font-bold">아래 R 코드는 `cmprsk` 패키지를 이용하여 경쟁 위험 분석을 수행하는 과정을 보여줌. 특히, **Gray's Test**는 두 그룹 간 누적 발생 곡선에 통계적으로 유의미한 차이가 있는지 검정하는 데 사용됨.</p>
+                    <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                        <pre><code># install.packages(c("cmprsk", "prodlim")) # 필요시 설치
+library(cmprsk)
+library(prodlim) # 누적 발생 곡선 플롯을 위해 사용
+
+# 1. 경쟁 위험 시뮬레이션 데이터 생성 (n=100)
+set.seed(42)
+n_competing <- 100
+max_time_competing <- 60 # 최대 추적 기간 (개월)
+
+# 환자별 데이터 생성
+competing_data <- data.frame(
+  id = 1:n_competing,
+  time = round(runif(n_competing, min = 1, max = max_time_competing)), # 사건 발생 또는 중도절단 시간
+  # event: 1=전립선암 사망, 2=심혈관질환 사망, 0=중도절단
+  event = sample(c(0, 1, 2), n_competing, replace = TRUE, prob = c(0.4, 0.3, 0.3)),
+  group = factor(sample(c("치료군 A", "치료군 B"), n_competing, replace = TRUE)), # 치료군
+  age = round(rnorm(n_competing, mean = 65, sd = 8)) # 연령 변수 추가
+)
+
+# 2. 두 군간 누적 발생 곡선 (Cumulative Incidence Curve) 그리기
+# cuminc() 함수 사용: competing risks incidence function
+# ftime: 시간 변수, fstatus: 사건 상태 변수, group: 그룹 변수, cencode: 중도 절단 코드
+cuminc_fit <- cuminc(ftime = competing_data$time, fstatus = competing_data$event, 
+                     group = competing_data$group, cencode = 0)
+
+# 누적 발생 곡선 플롯 (전립선암 사망, 즉 event=1에 대한 그래프만 표시)
+# plot() 함수는 cmprsk 패키지의 cuminc 객체를 시각화함.
+# which.cause = 1을 추가하여 관심 사건(전립선암 사망)만 플롯함.
+plot(cuminc_fit, 
+     col = c("blue", "red", "darkgreen", "purple"), # 각 군별 색상 
+     lty = c(1,1,2,2), # 선 종류
+     lwd = 2, # 선 굵기
+     xlab = "시간 (개월)", 
+     ylab = "누적 발생 확률",
+     main = "두 치료 군간 원인별 사망 누적 발생 곡선",
+)
+
+# 관심 사건만 뽑아서 그림을 그리려면?
+# 결과 확인: 관심 사건이 어떤 이름으로 저장되었는지 확인
+names(cuminc_fit)
+
+# 관심 사건 (type 1)만 선택
+cuminc_fit_1 <- cuminc_fit[grep("1$", names(cuminc_fit))] # 이름이 "1"로 끝나는 것만 (type 1 사건만)
+
+# 그림 그리기
+plot(cuminc_fit_1, 
+     col = c("blue", "red"), # 각 군별 색상 
+     lty = c(1,1), # 선 종류
+     lwd = 2, # 선 굵기
+     xlab = "시간 (개월)", 
+     ylab = "누적 발생 확률",
+     main = "두 치료 군간 전립선암 사망 누적 발생 곡선",
+)
+
+
+# 3. Gray's Test (그레이 검정) 설명 및 수행
+# Gray's Test는 경쟁 위험 상황에서 두 그룹 간 특정 사건의 누적 발생 곡선에 통계적으로 유의미한 차이가 있는지 검정함.
+# 이는 Log-rank 검정이 모든 사건을 동등하게 취급하는 것과 달리, 경쟁 사건의 영향을 고려함.
+# cmprsk 패키지의 cuminc() 함수 결과에 포함된 p-값으로 확인 가능함.
+# (위 plot() 명령 실행 시 나오는 p-값은 Gray's test의 결과임)
+# 예시: print(cuminc_fit) 명령으로 상세 결과 확인 가능
+print(cuminc_fit)
+
+
+# 4. Cause-Specific Hazards (CSH) Model을 이용한 분석
+# Cox 비례 위험 모델을 각 사건 유형별로 개별적으로 적합
+# 관심 사건 외의 다른 사건들은 '중도 절단'으로 간주
+# 전립선암 사망(event=1)에 대한 CSH 모델
+csh_fit_cancer <- coxph(Surv(time, event == 1) ~ group + age, data = competing_data)
+summary(csh_fit_cancer)
+
+# 심혈관질환 사망(event==2)에 대한 CSH 모델
+csh_fit_cvd <- coxph(Surv(time, event == 2) ~ group + age, data = competing_data)
+summary(csh_fit_cvd)
+
+# 5. Cumulative Incidence를 이용한 Fine and Gray's Model (Sub-distribution Hazards Model) 분석
+# crr() 함수 사용: competing risks regression
+# failcode: 관심 사건 코드, cencode: 중도 절단 코드
+# cov1: 공변량 매트릭스 (cbind로 묶음)
+
+table(competing_data$group, competing_data$event)
+competing_data$group_1=ifelse(competing_data$group=="치료군 A",1,0)
+fg_fit <- crr(ftime = competing_data$time, fstatus = competing_data$event, 
+              cov1 = as.matrix(competing_data[, c("age", "group_1")]), 
+              failcode = 1, # 관심 사건: 전립선암 사망 (event=1)
+              cencode = 0) # 중도 절단 코드: 0
+summary(fg_fit)
+
+# 결과 해석:
+# CSH 모델은 각 원인별 위험 요인을 독립적으로 평가하는 반면,
+# Fine & Gray 모델은 경쟁 위험을 고려하여 특정 사건의 누적 발생 확률에 대한 공변량의 영향을 평가함.
+# 두 모델의 위험비(HR)는 다르게 해석될 수 있으므로, 연구 목적에 맞는 모델 선택이 중요함.
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="flex justify-between mt-4">
+                    <button id="advanced-prev" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition disabled:opacity-50 text-xl font-bold">이전</button>
+                    <button id="advanced-next" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition text-xl font-bold">다음</button>
+                </div>
+            </div>
+
+            <div id="qna" class="content-section p-4 md:p-6 bg-white rounded-xl shadow-md">
+                <h2 class="text-2xl font-bold mb-4">추가 주제 및 질의 응답</h2>
+                <p class="mb-4 text-xl font-bold">생존 분석과 관련된 추가적인 논의나 궁금증을 해결하는 시간임.</p>
+                <ul class="list-disc list-inside mb-4 space-y-2">
+                    <li><strong class="text-xl font-bold">Q&A:</strong> .</li>
+                </ul>
+                <div class="note p-4 rounded-lg mt-6">
+                    <p class="font-semibold text-gray-800 text-xl font-bold">질문?</p>
+                    <p class="text-gray-700 text-xl font-bold">강의 내용을 복습하거나, 실제 연구에 적용하는 과정에서 궁금한 점이 있다면 질문해 주십시오.</p>
+                </div>
+            </div>
+
+            <div id="r_setup" class="content-section p-4 md:p-6 bg-white rounded-xl shadow-md">
+                <h2 class="text-2xl font-bold mb-4">R 환경 설정 및 필수 패키지</h2>
+                <p class="mb-4 text-xl font-bold">생존 분석 실습을 위해 R 환경을 설정하고 필요한 패키지를 설치하는 방법을 안내함. 강의 시작 전 다음 패키지들이 설치되어 있는지 확인함.</p>
+                
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">R 및 RStudio 설치</h3>
+                <ul class="list-disc list-inside mb-4 space-y-1">
+                    <li><strong class="text-xl font-bold">R 설치:</strong> <a href="https://cran.r-project.org/" target="_blank" class="text-blue-600 hover:underline text-xl font-bold">CRAN (Comprehensive R Archive Network) 웹사이트</a>에서 운영체제에 맞는 R 버전을 다운로드하여 설치함. R은 통계 계산 및 그래픽을 위한 프로그래밍 언어이자 소프트웨어 환경임.</li>
+                    <li><strong class="text-xl font-bold">RStudio 설치:</strong> <a href="https://posit.co/downloads/" target="_blank" class="text-blue-600 hover:underline text-xl font-bold">Posit (구 RStudio) 웹사이트</a>에서 RStudio Desktop 버전을 다운로드하여 설치함. RStudio는 R을 더 편리하게 사용할 수 있도록 돕는 통합 개발 환경(IDE)으로, 코드 작성, 실행, 결과 확인 및 시각화를 위한 사용자 친화적인 인터페이스를 제공함.</li>
+                </ul>
+
+                <h3 class="text-xl font-semibold mb-3 border-b pb-2 text-xl font-bold">필수 R 패키지 설치 및 로드</h3>
+                <p class="mb-4 text-xl font-bold">아래 패키지들은 생존 분석을 수행하는 데 필수적이거나 매우 유용한 패키지들임. 설치되어 있지 않다면 R 콘솔에서 `install.packages("패키지명")` 명령어를 통해 설치할 수 있음. 설치 후에는 `library(패키지명)` 명령어로 패키지를 로드해야 해당 패키지의 함수들을 사용할 수 있음.</p>
+                <div class="bg-gray-100 p-4 rounded-lg mb-4 text-sm overflow-x-auto text-xl font-bold">
+                    <pre><code># 생존 분석의 핵심 패키지. Surv(), coxph(), survfit() 등 주요 함수 포함.
+install.packages("survival")
+library(survival)
+
+# Kaplan-Meier 곡선 및 Cox 모델 진단 플롯 등 생존 분석 결과를 시각화하는 데 매우 유용. ggplot2 기반.
+install.packages("survminer")
+library(survminer)
+
+# 기본적인 데이터 시각화 패키지. survminer 등 많은 패키지의 의존성.
+install.packages("ggplot2")
+library(ggplot2)
+
+# Cox 모형 결과인 위험비(HR)를 시각적으로 표현하는 Forest plot을 그리는 데 유용.
+install.packages("forestplot")
+library(forestplot)
+
+# 경쟁 위험 분석을 위한 핵심 패키지. cuminc(), crr() 함수 포함.
+install.packages("cmprsk")
+library(cmprsk)
+
+# 경쟁 위험 누적 발생 곡선 등을 그리는 데 유용. prodlim() 함수 포함.
+install.packages("prodlim")
+library(prodlim)
+
+# 예제 데이터 (예: Melanoma 데이터셋)를 제공하는 패키지.
+install.packages("MASS")
+library(MASS)
+</code></pre>
+                </div>
+                <p class="mb-4 text-xl font-bold">이 패키지들을 미리 설치하고 로드해두면 강의 실습을 원활하게 진행할 수 있음.</p>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('DOM Content Loaded. Initializing app.');
+            const tabs = document.querySelectorAll('.tab-button');
+            const contents = document.querySelectorAll('.content-section');
+            let kmChartInstance, competingRiskChartInstance, forestPlotChartInstance; 
+
+            const appData = {
+                km: {
+                    delay: {
+                        labels: [0, 2, 4, 6, 8, 10, 12, 14, 16],
+                        groups: {
+                            '치료 지연 (N=17)': [1, 1, 0.76, 0.76, 0.41, 0.41, 0.41, 0.41, 0.41],
+                            '치료 지연 없음 (N=31)': [1, 0.74, 0.4, 0.21, 0.17, 0.1, 0.1, 0.1, 0.1],
+                        },
+                        pValue: 0.0058,
+                        title: '치료 지연 여부에 따른 무진행 생존율'
+                    },
+                    reduction: {
+                        labels: [0, 2, 4, 6, 8, 10, 12, 14, 16],
+                        groups: {
+                            '용량 감소 (N=12)': [1, 1, 0.91, 0.79, 0.61, 0.49, 0.49, 0.49, 0.49],
+                            '용량 감소 없음 (N=36)': [1, 0.72, 0.38, 0.19, 0.13, 0.09, 0.09, 0.09, 0.09],
+                        },
+                        pValue: 0.016,
+                        title: '용량 감소 여부에 따른 무진행 생존율'
+                    }
+                },
+                cox: {
+                    age: { hr: 0.7828, p: 0.1885, ci_lower: 0.5434, ci_upper: 1.1277, text: '나이가 1년 증가할 때마다 사망 위험이 약 0.78배로 감소함 (p=0.1885). 통계적으로 유의미한 차이는 아님.' },
+                    tumor_size: { hr: 1.8700, p: 0.6386, ci_lower: 0.1372, ci_upper: 25.49, text: '종양 크기가 1cm 증가할 때마다 사망 위험이 약 1.87배 증가함 (p=0.6386). 통계적으로 유의미한 차이는 아님.' },
+                    therapy: { hr: 8.4079, p: 0.0426, ci_lower: 1.0734, ci_upper: 65.86, text: 'RT(광자 치료)는 CIRT(탄소 이온 치료)에 비해 사망 위험이 약 8.41배 높음 (p=0.0426). 통계적으로 유의미한 차이를 보임.' }
+                },
+                timeDependent: {
+                    early: { hr: 1.05, text: '730일 이전에는 그룹 간 위험비(HR)가 1.05로, 통계적으로 유의미한 차이가 없음.' },
+                    late: { hr: 2.50, text: '730일 이후에는 그룹 간 위험비(HR)가 2.50으로, 위험률 차이가 커짐.' }
+                },
+                competingRisk: {
+                    labels: [0, 12, 24, 36, 48, 60],
+                    groups: {
+                        cancer: [0, 0.08, 0.10, 0.12, 0.15, 0.18],
+                        cvd: [0, 0.05, 0.08, 0.09, 0.10, 0.11],
+                    }
+                }
+            };
+            
+            // Custom plugin to draw the vertical line at HR=1 for Forest Plot
+            const hrLinePlugin = {
+                id: 'hrLinePlugin',
+                beforeDraw(chart, args, options) {
+                    const {ctx, chartArea: {left, right, top, bottom}, scales: {x}} = chart;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.strokeStyle = options.lineColor;
+                    ctx.lineWidth = options.lineWidth;
+                    ctx.setLineDash(options.lineDash);
+                    ctx.moveTo(x.getPixelForValue(1), top);
+                    ctx.lineTo(x.getPixelForValue(1), bottom);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            };
+
+            function setActiveTab(tabId) {
+                console.log(`Setting active tab to: ${tabId}`);
+                tabs.forEach(tab => {
+                    tab.classList.toggle('active', tab.dataset.tab === tabId);
+                });
+                contents.forEach(content => {
+                    content.classList.toggle('active', content.id === tabId);
+                });
+
+                // Manage sub-pages for relevant tabs
+                if (tabId === 'intro') {
+                    showSubPage('intro', 1); // Default to first sub-page
+                } else {
+                    hideAllSubPages('intro');
+                }
+
+                if (tabId === 'advanced_models') {
+                    showSubPage('advanced_models', 1); // Default to first sub-page
+                    // Add a small delay for rendering competing risk chart
+                    setTimeout(() => {
+                        renderCompetingRiskChart();
+                    }, 100); // Give DOM a moment to render checkboxes
+                } else {
+                    hideAllSubPages('advanced_models');
+                    if (competingRiskChartInstance) {
+                        competingRiskChartInstance.destroy();
+                        console.log('Destroyed competingRiskChartInstance');
+                    }
+                }
+
+                // Render charts only when their respective tabs are active
+                if (tabId === 'km_logrank') {
+                    renderKmChart('delay', 'kmChartLogRank', 'km-result-logrank', 'km-group-selector-logrank');
+                } else if (kmChartInstance) {
+                    kmChartInstance.destroy();
+                    console.log('Destroyed kmChartInstance');
+                }
+
+                if (tabId === 'cox_model') {
+                    renderForestPlot(); // Render Forest Plot when Cox Model tab is active
+                } else if (forestPlotChartInstance) {
+                    forestPlotChartInstance.destroy(); // Destroy when tab is not active
+                    console.log('Destroyed forestPlotChartInstance');
+                }
+            }
+
+            tabs.forEach(tab => {
+                tab.addEventListener('click', () => setActiveTab(tab.dataset.tab));
+            });
+            
+            // Initial activation of the first tab
+            setActiveTab('intro');
+            console.log('Initial tab set to intro.');
+
+            // Sub-page navigation logic
+            function showSubPage(sectionId, pageNum) {
+                console.log(`Showing sub-page ${pageNum} for section ${sectionId}`);
+                const section = document.getElementById(sectionId);
+                if (!section) {
+                    console.error(`Section with ID ${sectionId} not found.`);
+                    return;
+                }
+                const subPages = section.querySelectorAll('.sub-page');
+                subPages.forEach(page => page.classList.remove('active'));
+                
+                const targetPage = section.querySelector(`.sub-page[data-page="${pageNum}"]`);
+                if (targetPage) {
+                    targetPage.classList.add('active');
+                } else {
+                    console.error(`Sub-page ${pageNum} not found for section ${sectionId}.`);
+                }
+
+                const prevBtn = section.querySelector(`#${sectionId}-prev`);
+                const nextBtn = section.querySelector(`#${sectionId}-next`);
+
+                if (prevBtn) prevBtn.disabled = (pageNum === 1);
+                if (nextBtn) nextBtn.disabled = (pageNum === subPages.length);
+
+                section.dataset.currentPage = pageNum;
+                // Ensure MathJax re-renders on sub-page change
+                if (typeof MathJax !== 'undefined') {
+                    console.log('Typesetting MathJax for sub-page.');
+                    MathJax.typesetPromise();
+                }
+            }
+
+            function hideAllSubPages(sectionId) {
+                console.log(`Hiding all sub-pages for section: ${sectionId}`);
+                const section = document.getElementById(sectionId);
+                if (section) {
+                    const subPages = section.querySelectorAll('.sub-page');
+                    subPages.forEach(page => page.classList.remove('active'));
+                }
+            }
+
+            // Event listeners for sub-page navigation buttons
+            // Use setTimeout to ensure DOM is fully loaded in all environments
+            // Increased delay to 1000ms for robustness.
+            // Also added checks for element existence before adding listeners.
+            setTimeout(() => {
+                console.log('Adding sub-page navigation button listeners.');
+                const introPrevBtn = document.getElementById('intro-prev');
+                const introNextBtn = document.getElementById('intro-next');
+                const advancedPrevBtn = document.getElementById('advanced-prev');
+                const advancedNextBtn = document.getElementById('advanced-next');
+
+                if (introPrevBtn) {
+                    introPrevBtn.addEventListener('click', () => {
+                        const currentPage = parseInt(document.getElementById('intro').dataset.currentPage);
+                        showSubPage('intro', currentPage - 1);
+                    });
+                }
+                if (introNextBtn) {
+                    introNextBtn.addEventListener('click', () => {
+                        const currentPage = parseInt(document.getElementById('intro').dataset.currentPage);
+                        showSubPage('intro', currentPage + 1);
+                    });
+                }
+
+                if (advancedPrevBtn) {
+                    advancedPrevBtn.addEventListener('click', () => {
+                        const currentPage = parseInt(document.getElementById('advanced_models').dataset.currentPage);
+                        showSubPage('advanced_models', currentPage - 1);
+                    });
+                }
+                if (advancedNextBtn) {
+                    advancedNextBtn.addEventListener('click', () => {
+                        const currentPage = parseInt(document.getElementById('advanced_models').dataset.currentPage);
+                        showSubPage('advanced_models', currentPage + 1);
+                    });
+                }
+            }, 1000); // Increased delay for robustness
+
+
+            function renderKmChart(groupKey, chartId, resultId, selectorId) {
+                console.log(`Rendering KM Chart for group: ${groupKey}`);
+                const currentChartCanvas = document.getElementById(chartId);
+                if (!currentChartCanvas) {
+                    console.error(`Canvas element with ID ${chartId} not found.`);
+                    return;
+                }
+
+                if (Chart.getChart(currentChartCanvas)) {
+                    Chart.getChart(currentChartCanvas).destroy();
+                }
+                
+                const chartData = appData.km[groupKey];
+                const datasets = Object.keys(chartData.groups).map((groupName, index) => ({
+                    label: groupName,
+                    data: chartData.groups[groupName],
+                    borderColor: index === 0 ? 'rgba(59, 130, 246, 1)' : 'rgba(249, 115, 22, 1)',
+                    backgroundColor: index === 0 ? 'rgba(59, 130, 246, 0.1)' : 'rgba(249, 115, 22, 0.1)',
+                    borderWidth: 2.5,
+                    pointRadius: 0,
+                    stepped: true, 
+                    fill: true
+                }));
+
+                const ctx = currentChartCanvas.getContext('2d');
+                kmChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: chartData.labels,
+                        datasets: datasets
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            title: { display: true, text: chartData.title, font: { size: 16 } },
+                            tooltip: { mode: 'index', intersect: false }
+                        },
+                        scales: {
+                            x: { title: { display: true, text: '시간 (개월)' } },
+                            y: { title: { display: true, text: '생존 확률' }, min: 0, max: 1 }
+                        }
+                    }
+                });
+
+                const resultElement = document.getElementById(resultId);
+                if (resultElement) {
+                    resultElement.innerHTML = `Log-Rank Test: <span class="text-blue-700">p = ${chartData.pValue}</span>`;
+                } else {
+                    console.error(`Result element with ID ${resultId} not found.`);
+                }
+            }
+
+            // Ensure selector is available before adding listener
+            const kmGroupSelector = document.getElementById('km-group-selector-logrank');
+            if (kmGroupSelector) {
+                kmGroupSelector.addEventListener('change', (e) => {
+                    renderKmChart(e.target.value, 'kmChartLogRank', 'km-result-logrank', 'km-group-selector-logrank');
+                });
+            }
+
+            document.querySelectorAll('.cox-var-btn').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    const varKey = e.target.dataset.var;
+                    const data = appData.cox[varKey];
+                    const interpretationP = document.getElementById('cox-interpretation');
+                    if (interpretationP) { // Check if element exists
+                        interpretationP.innerHTML = `<strong class="text-blue-700">위험비(HR): ${data.hr}</strong><br>${data.text}`;
+                    } else {
+                        console.error('Cox interpretation element not found.');
+                    }
+
+                    document.querySelectorAll('.cox-var-btn').forEach(btn => btn.classList.remove('bg-blue-200'));
+                    e.target.classList.add('bg-blue-200');
+                });
+            });
+
+            const timeSlider = document.getElementById('time-slider');
+            const timeDependentResult = document.getElementById('time-dependent-result');
+            
+            function updateTimeDependentResult() {
+                const period = timeSlider.value === '0' ? 'early' : 'late';
+                const data = appData.timeDependent[period];
+                if (timeDependentResult) { // Check if element exists
+                    timeDependentResult.innerHTML = `선택 기간: <span class="text-blue-700">${period === 'early' ? '초기' : '후기'}</span> | ${data.text}`;
+                } else {
+                    console.error('Time dependent result element not found.');
+                }
+            }
+            if (timeSlider) { // Check if element exists
+                timeSlider.addEventListener('input', updateTimeDependentResult);
+                updateTimeDependentResult();
+            }
+
+
+            function renderCompetingRiskChart() {
+                console.log('Rendering Competing Risk Chart.');
+                const currentChartCanvas = document.getElementById('competingRiskChart');
+                const showCancerCheckbox = document.getElementById('comp-risk-cancer');
+                const showCvdCheckbox = document.getElementById('comp-risk-cvd');
+
+                if (!currentChartCanvas || !showCancerCheckbox || !showCvdCheckbox) {
+                    console.warn('Competing Risk Chart elements not yet available. Retrying...');
+                    // Retry after a short delay if elements are not ready
+                    setTimeout(renderCompetingRiskChart, 500);
+                    return;
+                }
+
+                if (competingRiskChartInstance) {
+                    competingRiskChartInstance.destroy();
+                }
+
+                const showCancer = showCancerCheckbox.checked;
+                const showCvd = showCvdCheckbox.checked;
+                const datasets = [];
+
+                if(showCancer) {
+                    datasets.push({
+                        label: '전립선암 사망',
+                        data: appData.competingRisk.groups.cancer,
+                        borderColor: 'rgba(219, 39, 119, 1)',
+                        backgroundColor: 'rgba(219, 39, 119, 0.1)',
+                        borderWidth: 2.5,
+                        pointRadius: 2,
+                        stepped: true, 
+                        fill: true
+                    });
+                }
+                if(showCvd) {
+                    datasets.push({
+                        label: '심혈관질환 사망',
+                        data: appData.competingRisk.groups.cvd,
+                        borderColor: 'rgba(16, 185, 129, 1)',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        borderWidth: 2.5,
+                        pointRadius: 2,
+                        stepped: true, 
+                        fill: true
+                    });
+                }
+
+                const ctx = currentChartCanvas.getContext('2d');
+                competingRiskChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: appData.competingRisk.labels,
+                        datasets: datasets
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            title: { display: true, text: '원인별 누적 발생 확률 (CIF)', font: { size: 16 } },
+                            tooltip: { mode: 'index', intersect: false }
+                        },
+                        scales: {
+                            x: { title: { display: true, text: '시간 (개월)' } },
+                            y: { title: { display: true, text: '누적 발생 확률' }, min: 0, max: 0.25 }
+                        }
+                    }
+                });
+            }
+
+            // Ensure these event listeners are added after elements are available
+            // Moved this block outside of setTimeout for initial setup, but still within DOMContentLoaded
+            const compRiskCancer = document.getElementById('comp-risk-cancer');
+            const compRiskCvd = document.getElementById('comp-risk-cvd');
+            if (compRiskCancer) compRiskCancer.addEventListener('change', renderCompetingRiskChart);
+            if (compRiskCvd) compRiskCvd.addEventListener('change', renderCompetingRiskChart);
+
+
+            // Forest Plot rendering function
+            function renderForestPlot() {
+                console.log('Rendering Forest Plot.');
+                const forestPlotCanvas = document.getElementById('forestPlotChart');
+                if (!forestPlotCanvas) {
+                    console.error('Forest Plot Canvas element not found.');
+                    return;
+                }
+
+                if (forestPlotChartInstance) {
+                    forestPlotChartInstance.destroy();
+                }
+
+                const variables = Object.keys(appData.cox);
+                const labels = variables.map(key => {
+                    if (key === 'age') return '나이 (1년 증가)';
+                    if (key === 'tumor_size') return '종양 크기 (1cm 증가)';
+                    if (key === 'therapy') return '치료법 (RT vs CIRT)';
+                    return key;
+                }); // Reverse to match typical forest plot order (bottom to top)
+
+                // Data for HR points
+                const hrPointsData = variables.map(key => ({
+                    x: appData.cox[key].hr,
+                    y: labels[variables.indexOf(key)] // Match y-label
+                })).reverse();
+
+                // Data for CI bars (represented as min/max for horizontal bars)
+                const ciBarsData = variables.map(key => ({
+                    x: [appData.cox[key].ci_lower, appData.cox[key].ci_upper],
+                    y: labels[variables.indexOf(key)] // Match y-label
+                })).reverse();
+
+                const ctx = forestPlotCanvas.getContext('2d');
+                forestPlotChartInstance = new Chart(ctx, {
+                    type: 'bar', // Base type for horizontal bars (CI)
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: '95% 신뢰구간',
+                                data: ciBarsData.map(item => ({x: item.x, y: item.y})), // Data is [lower, upper] for bars
+                                backgroundColor: 'rgba(150, 150, 150, 0.3)', // Light grey for CI bars
+                                borderColor: 'rgba(150, 150, 150, 0.8)',
+                                borderWidth: 1,
+                                barPercentage: 0.2, // Make bars thinner
+                                categoryPercentage: 0.8,
+                                minBarLength: 2, // Ensure small intervals are visible
+                            },
+                            {
+                                label: '위험비 (HR)',
+                                data: hrPointsData, // Data is just the HR value for scatter points
+                                type: 'scatter', // Overlay as scatter plot for points
+                                backgroundColor: 'rgba(59, 130, 246, 1)', // Blue for HR points
+                                borderColor: 'rgba(59, 130, 246, 1)',
+                                pointRadius: 5,
+                                pointHoverRadius: 7,
+                                // yAxisID: 'y' is implicitly handled by Chart.js when labels are matched
+                            }
+                        ]
+                    },
+                    options: {
+                        indexAxis: 'y', // Horizontal bars
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            title: { display: true, text: 'Cox 모델 Forest Plot', font: { size: 16 } },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        if (context.dataset.label === '위험비 (HR)') {
+                                            return `HR: ${context.parsed.x.toFixed(4)}`;
+                                        } else if (context.dataset.label === '95% 신뢰구간') {
+                                            // Accessing raw data for CI values
+                                            const rawData = context.dataset.data[context.dataIndex];
+                                            return `95% CI: [${rawData.x[0].toFixed(4)}, ${rawData.x[1].toFixed(4)}]`;
+                                        }
+                                        return context.dataset.label + ': ' + context.parsed.x.toFixed(4);
+                                    }
+                                }
+                            },
+                            hrLinePlugin: { // Custom plugin options
+                                lineColor: 'rgba(0, 0, 0, 0.5)',
+                                lineWidth: 1,
+                                lineDash: [5, 5]
+                            }
+                        },
+                        scales: {
+                            x: {
+                                title: { display: true, text: '위험비 (Hazard Ratio)' },
+                                type: 'logarithmic', // Log scale for HR is common
+                                min: 0.1, // Adjust min/max based on data range
+                                max: 100, // Adjust max to accommodate wide CIs
+                                ticks: {
+                                    callback: function(value, index, values) {
+                                        // Display 0.1, 1, 10, 100 etc. for log scale
+                                        if (value === 0.1 || value === 1 || value === 10 || value === 100) {
+                                            return value;
+                                        }
+                                        return null; // Hide intermediate ticks
+                                    }
+                                },
+                                grid: {
+                                    lineWidth: 1,
+                                    color: (context) => context.tick.value === 1 ? 'rgba(0,0,0,0.8)' : 'rgba(0,0,0,0.1)', // Highlight HR=1 line
+                                    drawOnChartArea: true,
+                                }
+                            },
+                            y: {
+                                title: { display: false },
+                                grid: { display: false }
+                            }
+                        }
+                    },
+                    plugins: [hrLinePlugin] // Register the custom plugin
+                });
+            }
+        });
+    </script>
+</body>
+</html>
